@@ -1,118 +1,172 @@
+import 'dart:io';
+
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/io.dart';
+import 'dart:developer' as developer;
 
 void main() => runApp(MyApp());
 
-class MyApp extends StatefulWidget {
+class MyApp extends StatelessWidget {
   @override
-  _MyAppState createState() => _MyAppState();
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Websocket Grid App',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+      ),
+      home: MyHomePage(),
+    );
+  }
 }
 
-class _MyAppState extends State<MyApp> {
-  List _launchers = [];
+class MyHomePage extends StatefulWidget {
+  @override
+  _MyHomePageState createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
   IOWebSocketChannel? _channel;
+  List<dynamic> _launchers = [];
+  bool _isLoading = false;
+  bool _isConnected = false;
   bool _connectionError = false;
-  String _errorMessage = "";
 
   @override
   void initState() {
     super.initState();
-    _connect();
+    _connectWebsocket();
   }
 
-  void _connect() {
-    _channel = IOWebSocketChannel.connect('ws://threadripper0:9999/ws');
-    if (_channel != null && _channel!.stream != null) {
-      _channel!.sink?.add("launchers");
-      _channel!.stream?.listen((data) {
-        setState(() {
-          try {
-            _launchers = jsonDecode(data) as List;
-            _errorMessage = "";
-            _connectionError = false;
-          } catch (e) {
-            _errorMessage = "JSON parsing failed: $e";
-            _connectionError = true;
-          }
-        });
-      }, onError: (error) {
-        setState(() {
-          _errorMessage = "WebSocket connection failed: $error";
-          _connectionError = true;
-        });
-      });
-    } else {
+  void _listenWebsocket() {
+    _channel!.sink?.add("launchers");
+    _channel!.stream?.listen((data) {
       setState(() {
-        _errorMessage = "WebSocket connection failed";
-        _connectionError = true;
+        _isConnected = true;
+        try {
+          var response = json.decode(data);
+          if (response.containsKey("launchers")) {
+            _launchers = response.remove("launchers");
+          } else {
+            print(response);
+          }
+        } catch (error) {
+          print(error);
+
+          _launchers = [];
+        }
       });
+    }, onDone: () {
+      _connectWebsocket();
+    });
+  }
+
+  void _connectWebsocket() {
+    try {
+      _channel = IOWebSocketChannel.connect("ws://threadripper0:9999/ws");
+      _listenWebsocket();
+    } on SocketException catch (e) {
+      setState(() {
+        _isLoading = false;
+        _isConnected = false;
+      });
+      showErrorDialog(context, 'Websocket Connection Error',
+          'Failed to connect to websocket: $e');
+    } on HandshakeException catch (e) {
+      setState(() {
+        _isLoading = false;
+        _isConnected = false;
+      });
+      showErrorDialog(context, 'Websocket Connection Error',
+          'Failed to connect to websocket: $e');
+    }
+    ;
+  }
+
+  void showErrorDialog(BuildContext context, String title, String message) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: <Widget>[
+            ElevatedButton(
+              child: Text('OK'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _reconnectWebsocket() {
+    if (!_isConnected) {
+      print("reconnecting");
+      _connectWebsocket();
     }
   }
 
   @override
   Widget build(BuildContext context) {
-
-    return MaterialApp(
-      theme: ThemeData(
-        platform: TargetPlatform.iOS,
-        primarySwatch: Colors.blue,
-      ),
-      home: Scaffold(
-          appBar: PreferredSize(
-            preferredSize: Size.fromHeight(0),
-            child: AppBar(
-              title: Text('Flutter GridView Example'),
-              elevation: 0.0,
-            ),
-          ),
-          body: OrientationBuilder(builder: (context, orientation) {
-            int crossAxisCount = 2;
-            if (orientation == Orientation.landscape) {
-              crossAxisCount = 4;
-            }
-            return (_connectionError)
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(_errorMessage),
-                        ElevatedButton(
-                          child: Text("Retry"),
-                          onPressed: () {
-                            setState(() {
-                              _connectionError = false;
-                            });
-                            _connect();
-                          },
-                        ),
-                      ],
+    return Scaffold(
+      body: OrientationBuilder(
+        builder: (context, orientation) {
+          return _launchers == []
+              ? _errorScreen()
+              : Container(
+                  padding: EdgeInsets.all(10.0),
+                  child: GridView.count(
+                    mainAxisSpacing: 10,
+                    crossAxisSpacing: 10,
+                    crossAxisCount: orientation == Orientation.portrait ? 2 : 4,
+                    children: List.generate(
+                      _launchers.length,
+                      (index) => ElevatedButton(
+                        onPressed: () => _sendIndex(
+                            _launchers[index]['key'].toLowerCase()),
+                        child: Text(_launchers[index]['label']),
+                      ),
                     ),
-                  )
-                : GridView.count(
-                    crossAxisCount: crossAxisCount,
-                    children: (_launchers == null)
-                        ? [CircularProgressIndicator()]
-                        : _launchers.map((launcher) {
-                            return Container(
-                              padding: EdgeInsets.all(5.0),
-                              child: ElevatedButton(
-                                onPressed: () {
-                                  if (_channel != null) {
-                                    _channel!.sink?.add(jsonEncode(launcher));
-                                  }
-                                },
-                                child: Text(launcher['label']),
-                              ),
-                            );
-                          }).toList());
-          })),
+                  ),
+                );
+        },
+      ),
+    );
+  }
+
+  void _sendIndex(String index) {
+    _reconnectWebsocket();
+    print('sending me $index');
+    developer.log('sending me $index', name: 'avogato');
+
+    _channel!.sink?.add(json.encode({
+      'key': index,
+    }));
+  }
+
+  Widget _errorScreen() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: <Widget>[
+        Text('Error parsing data'),
+        SizedBox(
+          height: 10.0,
+        ),
+        ElevatedButton(
+          onPressed: _reconnectWebsocket,
+          child: Text('Retry'),
+        ),
+      ],
     );
   }
 
   @override
   void dispose() {
-    _channel?.sink.close();
+    _channel!.sink?.close();
     super.dispose();
   }
 }
