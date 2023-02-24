@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:web_socket_channel/io.dart';
 import 'dart:developer' as developer;
 import 'imagebtn.dart';
+import 'package:zeroconf/zeroconf.dart';
 
 
 void main() => runApp(MyApp());
@@ -29,7 +30,7 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   IOWebSocketChannel? _channel;
-  List<dynamic> _launchers = [];
+    Map<String, dynamic> _launchers = {};
   bool _isLoading = false;
   bool _isConnected = false;
   bool _connectionError = false;
@@ -41,12 +42,14 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   void _listenWebsocket() {
-    _channel!.sink?.add("launchers");
+    _channel!.sink?.add(json.encode({
+      'cmd': "launchers",
+    }));
     _channel!.stream?.listen((data) {
       setState(() {
         _isConnected = true;
         try {
-          var response = json.decode(data);
+          Map<String, dynamic> response = json.decode(data);
           if (response.containsKey("launchers")) {
             _launchers = response.remove("launchers");
           } else {
@@ -55,7 +58,7 @@ class _MyHomePageState extends State<MyHomePage> {
         } catch (error) {
           print(error);
 
-          _launchers = [];
+          _launchers = {};
         }
       });
     }, onDone: () {
@@ -65,7 +68,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   void _connectWebsocket() {
     try {
-      _channel = IOWebSocketChannel.connect("ws://threadripper0:9999/ws");
+      _channel = IOWebSocketChannel.connect("ws://threadripper0:9990");
       _listenWebsocket();
     } on SocketException catch (e) {
       setState(() {
@@ -117,7 +120,7 @@ class _MyHomePageState extends State<MyHomePage> {
     return Scaffold(
       body: OrientationBuilder(
         builder: (context, orientation) {
-          return _launchers == []
+          return _launchers == {}
               ? _errorScreen()
               : Container(
                   padding: EdgeInsets.all(10.0),
@@ -125,15 +128,16 @@ class _MyHomePageState extends State<MyHomePage> {
                     mainAxisSpacing: 10,
                     crossAxisSpacing: 10,
                     crossAxisCount: orientation == Orientation.portrait ? 2 : 4,
-                    children: List.generate(
-                      _launchers.length,
-                      (index) => ImageButton(
-                        imageBase64: _launchers[index]['image']?? "default",
-                        onPressed: () => _sendIndex(
-                            _launchers[index]['key'].toLowerCase()),
-                        child: Text(_launchers[index]['label']),
-                      ),
-                    ),
+                    children: _launchers.entries.map((entry){
+                    print('icon me $entry');
+                      return ImageButton(
+                        imageBase64: entry.value['icon'] ?? "default",
+                        onPressed: () =>
+                            _sendIndex(entry.key.toLowerCase()),
+                        label: entry.key,
+                      );
+                      }
+                    ).toList(),
                   ),
                 );
         },
@@ -144,7 +148,6 @@ class _MyHomePageState extends State<MyHomePage> {
   void _sendIndex(String index) {
     _reconnectWebsocket();
     print('sending me $index');
-    developer.log('sending me $index', name: 'avogato');
 
     _channel!.sink?.add(json.encode({
       'key': index,
